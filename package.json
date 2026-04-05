@@ -1,0 +1,17 @@
+{
+  "name": "novel-visualizer",
+  "version": "1.0.0",
+  "private": true,
+  "workspaces": [
+    "app/shared",
+    "app/backend",
+    "app/frontend"
+  ],
+  "scripts": {
+    "dev": "npm run dev --workspace=app/backend & npm run dev --workspace=app/frontend",
+    "dev:backend": "npm run dev --workspace=app/backend",
+    "dev:frontend": "npm run dev --workspace=app/frontend",
+    "build": "npm run build --workspace=app/shared && npm run build --workspaces --if-present",
+    "build:shared": "npm run build --workspace=app/shared"
+  }
+}

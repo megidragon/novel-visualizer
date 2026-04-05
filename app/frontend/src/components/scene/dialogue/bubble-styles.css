@@ -1,0 +1,91 @@
+.bubble {
+  max-width: 220px;
+  padding: 8px 12px;
+  border-radius: 10px;
+  font-size: 13px;
+  line-height: 1.4;
+  pointer-events: none;
+  animation: bubbleAppear 0.3s ease-out;
+  position: relative;
+}
+
+.speech-bubble {
+  background: rgba(255, 255, 250, 0.95);
+  color: #1a1a1a;
+  border: 2px solid #ddd;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+}
+
+.thought-bubble {
+  background: rgba(230, 230, 255, 0.9);
+  color: #2a2a4a;
+  border: 2px dashed #aab;
+  border-radius: 20px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+}
+
+.speaker-name {
+  display: block;
+  font-weight: 700;
+  font-size: 11px;
+  margin-bottom: 2px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.bubble-text {
+  margin: 0;
+  word-wrap: break-word;
+}
+
+.speech-bubble .bubble-tail {
+  position: absolute;
+  bottom: -8px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 0;
+  height: 0;
+  border-left: 8px solid transparent;
+  border-right: 8px solid transparent;
+  border-top: 8px solid rgba(255, 255, 250, 0.95);
+}
+
+.thought-bubble .bubble-tail {
+  position: absolute;
+  bottom: -12px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  gap: 3px;
+}
+
+.thought-bubble .bubble-tail::before,
+.thought-bubble .bubble-tail::after {
+  content: '';
+  display: block;
+  border-radius: 50%;
+  background: rgba(230, 230, 255, 0.9);
+  border: 1px dashed #aab;
+}
+
+.thought-bubble .bubble-tail::before {
+  width: 8px;
+  height: 8px;
+}
+
+.thought-bubble .bubble-tail::after {
+  width: 5px;
+  height: 5px;
+  margin-top: 3px;
+}
+
+@keyframes bubbleAppear {
+  from {
+    opacity: 0;
+    transform: scale(0.7) translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}

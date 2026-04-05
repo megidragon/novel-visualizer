@@ -1,0 +1,15 @@
+node_modules/
+dist/
+.env
+*.tsbuildinfo
+package-lock.json
+
+novels/pdfs/*
+novels/projects/*
+novels/temp/*
+!novels/.gitkeep
+!novels/pdfs/.gitkeep
+!novels/projects/.gitkeep
+
+*.mp3
+*.wav
