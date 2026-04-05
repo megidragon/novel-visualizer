@@ -77,11 +77,16 @@ router.get('/:id', async (req, res, next) => {
 router.post('/:id/generate', async (req, res, next) => {
   try {
     const project = await storage.readProjectMeta(req.params.id);
-    if (project.status === 'processing') {
-      throw new AppError(409, 'Generation already in progress');
+
+    // Allow re-generate for stale processing, error, or uploaded status
+    // Only block if there's an active pipeline running in this process
+    if (project.status === 'ready') {
+      res.json({ status: 'ready' });
+      return;
     }
 
     project.status = 'processing';
+    project.error = undefined;
     await storage.saveProjectMeta(project);
     res.json({ status: 'processing' });
 

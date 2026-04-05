@@ -45,14 +45,24 @@ export default function ViewerPage() {
     );
   }
 
-  // Show generate button for uploaded projects
-  if (project.status === 'uploaded') {
+  // Show generate button for uploaded projects or stale errors
+  if (project.status === 'uploaded' || project.status === 'error') {
     return (
       <div className="page" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
         <h2 style={{ marginBottom: '1rem' }}>{project.title}</h2>
-        <p style={{ color: 'var(--text-secondary)', marginBottom: '2rem' }}>
+        <p style={{ color: 'var(--text-secondary)', marginBottom: '1rem' }}>
           Style: {project.style}
         </p>
+        {project.status === 'error' && project.error && (
+          <p style={{ color: 'var(--error)', marginBottom: '1rem', fontSize: '0.9rem' }}>
+            Previous error: {project.error}
+          </p>
+        )}
+        {project.processedScenes > 0 && (
+          <p style={{ color: 'var(--text-secondary)', marginBottom: '1rem', fontSize: '0.9rem' }}>
+            {project.processedScenes} scenes already generated - will resume from there
+          </p>
+        )}
         <button
           onClick={() => {
             generate(project.id);
@@ -67,27 +77,44 @@ export default function ViewerPage() {
             fontSize: '1.2rem',
           }}
         >
-          Generate
+          {project.processedScenes > 0 ? 'Resume Generation' : 'Generate'}
         </button>
       </div>
     );
   }
 
-  // Show progress during generation
-  if (project.status === 'processing' || isGenerating) {
+  // Show progress during generation (or stale processing - offer to resume)
+  if (project.status === 'processing') {
+    if (!isGenerating) {
+      // Stale processing state - not actually running. Offer to resume.
+      return (
+        <div className="page" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
+          <h2 style={{ marginBottom: '1rem' }}>{project.title}</h2>
+          <p style={{ color: 'var(--text-secondary)', marginBottom: '1rem' }}>
+            Generation was interrupted ({project.processedScenes}/{project.totalScenes} scenes done)
+          </p>
+          <button
+            onClick={() => {
+              generate(project.id);
+            }}
+            style={{
+              padding: '1rem 3rem',
+              borderRadius: 8,
+              background: project.style === 'xinxia' ? 'var(--accent-xinxia)' : 'var(--accent-mysterious)',
+              color: '#fff',
+              fontWeight: 600,
+              fontSize: '1.2rem',
+            }}
+          >
+            Resume Generation
+          </button>
+        </div>
+      );
+    }
+
     return <GenerationProgress project={project} onComplete={() => {
       getProject(project.id).then(setProject);
     }} />;
-  }
-
-  // Show error state
-  if (project.status === 'error') {
-    return (
-      <div className="page" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
-        <p style={{ color: 'var(--error)', marginBottom: '1rem' }}>Generation failed</p>
-        <p style={{ color: 'var(--text-secondary)' }}>{project.error}</p>
-      </div>
-    );
   }
 
   // Loading scenes

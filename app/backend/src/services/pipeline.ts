@@ -1,40 +1,111 @@
-import type { NovelProject, ProgressEvent } from '@novel-visualizer/shared';
+import fs from 'fs/promises';
+import path from 'path';
+import type { NovelProject, ProgressEvent, SceneSpec } from '@novel-visualizer/shared';
 import * as storage from './storage.js';
 import { extractFullText } from './pdf-reader.js';
 import { NovelAgent } from './ai/agent.js';
 import { PiperTTS } from './tts/piper.js';
 import { reconcileTiming } from './tts/timing.js';
+import type { Act } from './ai/act-splitter.js';
 
 type ProgressCallback = (event: ProgressEvent) => void;
+
+interface PipelineCheckpoint {
+  acts: Act[];
+  characterRegistry: unknown[];
+  completedScenes: number;
+}
+
+function checkpointPath(projectId: string): string {
+  return path.join(storage.getProjectDir(projectId), 'checkpoint.json');
+}
+
+async function saveCheckpoint(projectId: string, checkpoint: PipelineCheckpoint): Promise<void> {
+  await fs.writeFile(checkpointPath(projectId), JSON.stringify(checkpoint, null, 2));
+}
+
+async function loadCheckpoint(projectId: string): Promise<PipelineCheckpoint | null> {
+  try {
+    const raw = await fs.readFile(checkpointPath(projectId), 'utf-8');
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
+}
+
+async function removeCheckpoint(projectId: string): Promise<void> {
+  await fs.unlink(checkpointPath(projectId)).catch(() => {});
+}
 
 export async function runPipeline(project: NovelProject, onProgress: ProgressCallback): Promise<void> {
   const pdfPath = storage.getPdfPath(project.id);
 
-  // Step 1: Extract text
-  onProgress({ phase: 'reading', message: 'Reading novel PDF...' });
-  const fullText = await extractFullText(pdfPath);
+  // Check for existing checkpoint to resume from
+  const existing = await loadCheckpoint(project.id);
 
-  // Step 2: Run AI agent to split into acts and design scenes
-  const agent = new NovelAgent(project.id, pdfPath, project.style, fullText);
+  let acts: Act[];
+  let startFromScene: number;
+  const scenes: SceneSpec[] = [];
 
-  onProgress({ phase: 'splitting', message: 'Analyzing novel structure and identifying acts...' });
-  const acts = await agent.splitIntoActs();
+  if (existing && existing.completedScenes > 0) {
+    // Resume from checkpoint
+    acts = existing.acts;
+    startFromScene = existing.completedScenes;
+    console.log(`[Pipeline] Resuming project ${project.id} from scene ${startFromScene + 1}/${acts.length}`);
+
+    onProgress({
+      phase: 'designing',
+      message: `Resuming from scene ${startFromScene + 1}/${acts.length}...`,
+      totalScenes: acts.length,
+      currentScene: startFromScene,
+    });
+
+    // Reload already completed scenes
+    for (let i = 1; i <= startFromScene; i++) {
+      try {
+        const scene = await storage.readSceneJson(project.id, i);
+        scenes.push(scene);
+      } catch {
+        // Scene file missing, re-generate from this point
+        startFromScene = i - 1;
+        console.warn(`[Pipeline] Scene ${i} missing, resuming from ${startFromScene}`);
+        break;
+      }
+    }
+  } else {
+    // Fresh start
+    onProgress({ phase: 'reading', message: 'Reading novel PDF...' });
+    const fullText = await extractFullText(pdfPath);
+
+    const agent = new NovelAgent(project.id, pdfPath, project.style, fullText);
+
+    onProgress({ phase: 'splitting', message: 'Analyzing novel structure and identifying acts...' });
+    acts = await agent.splitIntoActs();
+    startFromScene = 0;
+
+    // Save checkpoint with acts so we don't re-analyze if it fails during scene design
+    await saveCheckpoint(project.id, { acts, characterRegistry: [], completedScenes: 0 });
+    console.log(`[Pipeline] Split into ${acts.length} acts, checkpoint saved`);
+  }
 
   project.totalScenes = acts.length;
+  project.processedScenes = startFromScene;
   await storage.saveProjectMeta(project);
 
   onProgress({
     phase: 'designing',
-    message: `Designing ${acts.length} scenes...`,
+    message: `Designing ${acts.length} scenes (starting from ${startFromScene + 1})...`,
     totalScenes: acts.length,
-    currentScene: 0,
+    currentScene: startFromScene,
   });
 
+  // Re-create agent for scene design (uses full text for context)
+  const fullText = await extractFullText(pdfPath);
+  const agent = new NovelAgent(project.id, pdfPath, project.style, fullText);
   const tts = new PiperTTS();
-  const scenes = [];
 
-  for (let i = 0; i < acts.length; i++) {
-    // Step 3: Design scene
+  for (let i = startFromScene; i < acts.length; i++) {
+    console.log(`[Pipeline] Scene ${i + 1}/${acts.length}: designing...`);
     onProgress({
       phase: 'designing',
       message: `Designing scene ${i + 1}/${acts.length}...`,
@@ -44,7 +115,7 @@ export async function runPipeline(project: NovelProject, onProgress: ProgressCal
 
     const sceneSpec = await agent.designScene(acts[i], i, scenes);
 
-    // Step 4: Generate audio
+    console.log(`[Pipeline] Scene ${i + 1}/${acts.length}: generating audio...`);
     onProgress({
       phase: 'audio',
       message: `Generating audio for scene ${i + 1}/${acts.length}...`,
@@ -55,7 +126,6 @@ export async function runPipeline(project: NovelProject, onProgress: ProgressCal
     const audioPath = storage.getSceneAudioPath(project.id, i + 1);
     const { durationSeconds, texts } = await tts.synthesizeScene(sceneSpec.texts, audioPath);
 
-    // Step 5: Reconcile timing and save
     const finalScene = {
       ...sceneSpec,
       texts: reconcileTiming(texts),
@@ -66,11 +136,16 @@ export async function runPipeline(project: NovelProject, onProgress: ProgressCal
     await storage.saveSceneJson(project.id, i + 1, finalScene);
     scenes.push(finalScene);
 
+    // Update checkpoint after each scene
     project.processedScenes = i + 1;
     await storage.saveProjectMeta(project);
+    await saveCheckpoint(project.id, { acts, characterRegistry: [], completedScenes: i + 1 });
+
+    console.log(`[Pipeline] Scene ${i + 1}/${acts.length}: done`);
   }
 
-  // Done
+  // All done - remove checkpoint
+  await removeCheckpoint(project.id);
   project.status = 'ready';
   await storage.saveProjectMeta(project);
   onProgress({
@@ -79,4 +154,6 @@ export async function runPipeline(project: NovelProject, onProgress: ProgressCal
     totalScenes: scenes.length,
     currentScene: scenes.length,
   });
+
+  console.log(`[Pipeline] Project ${project.id} complete: ${scenes.length} scenes`);
 }
