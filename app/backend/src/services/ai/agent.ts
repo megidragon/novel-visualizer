@@ -1,11 +1,9 @@
-import OpenAI from 'openai';
 import type { SceneSpec, StyleTheme, CharacterAppearance } from '@novel-visualizer/shared';
 import { v4 as uuid } from 'uuid';
-import { config } from '../../config.js';
 import { splitIntoActs, type Act } from './act-splitter.js';
-import { allTools } from './tools.js';
 import { getSceneDesignPrompt, getCharacterRegistryPrompt } from './prompts.js';
 import { validateSceneSpec } from './validator.js';
+import { queryClaudeCli, queryClaudeCliJson } from './claude-cli.js';
 
 interface CharacterRegistry {
   name: string;
@@ -16,7 +14,6 @@ interface CharacterRegistry {
 const MAX_RETRIES = 3;
 
 export class NovelAgent {
-  private client: OpenAI;
   private characterRegistry: CharacterRegistry[] = [];
 
   constructor(
@@ -24,12 +21,7 @@ export class NovelAgent {
     private pdfPath: string,
     private style: StyleTheme,
     private fullText: string,
-  ) {
-    this.client = new OpenAI({
-      apiKey: config.openrouterApiKey,
-      baseURL: config.openrouterBaseUrl,
-    });
-  }
+  ) {}
 
   async splitIntoActs(): Promise<Act[]> {
     await this.buildCharacterRegistry();
@@ -39,24 +31,13 @@ export class NovelAgent {
   private async buildCharacterRegistry(): Promise<void> {
     const sample = this.fullText.slice(0, 20_000);
 
-    const response = await this.client.chat.completions.create({
-      model: config.model,
-      max_tokens: 4096,
-      messages: [
-        { role: 'system', content: getCharacterRegistryPrompt() },
-        { role: 'user', content: `Analyze these characters from the novel:\n\n${sample}` },
-      ],
-    });
-
-    const text = response.choices[0]?.message?.content || '';
-
     try {
-      const jsonMatch = text.match(/\[[\s\S]*\]/);
-      if (jsonMatch) {
-        this.characterRegistry = JSON.parse(jsonMatch[0]);
-      }
-    } catch {
-      console.warn('[NovelAgent] Failed to parse character registry');
+      this.characterRegistry = await queryClaudeCliJson<CharacterRegistry[]>(
+        `Analyze these characters from the novel:\n\n${sample}`,
+        getCharacterRegistryPrompt(),
+      );
+    } catch (err) {
+      console.error('[NovelAgent] Failed to parse character registry:', (err as Error).message);
     }
   }
 
@@ -71,7 +52,7 @@ export class NovelAgent {
       ? `\nKnown characters:\n${JSON.stringify(this.characterRegistry, null, 2)}`
       : '';
 
-    const userMessage = `Design scene ${actIndex + 1} for this narrative act.
+    const prompt = `Design scene ${actIndex + 1} for this narrative act.
 
 Style: ${this.style}
 ${contextSummary}
@@ -83,74 +64,63 @@ Act summary: ${act.summary}
 Narrative text:
 ${act.text.slice(0, 15_000)}
 
-First call AnalyzeScene to plan the visual layout, then call DesignScene with the full specification.`;
+Respond with a single JSON object matching this exact structure (no markdown, no explanation, ONLY the JSON):
+{
+  "sequence": ${actIndex + 1},
+  "environment": {
+    "description": "...",
+    "terrain": "mountain_peak|forest_clearing|temple_hall|cave|village_street|throne_room|battlefield|library|garden|dungeon|open_field",
+    "lighting": { "type": "dawn|day|dusk|night|mystical|ominous", "intensity": 0.0-2.0, "directionalAngle": 0-360 },
+    "props": [{ "type": "tree|rock|pillar|altar|torch|lantern|gate", "position": {"x":0,"y":0,"z":0}, "scale": 1.0 }],
+    "skyColor": "#hex",
+    "ambientColor": "#hex"
+  },
+  "characters": [{
+    "name": "...",
+    "position": {"x": -5 to 5, "y": 0, "z": -5 to 5},
+    "facing": "north|south|east|west|camera",
+    "appearance": {
+      "bodyType": "male_tall|male_average|female_tall|female_average|elder|child",
+      "robeColor": "#hex",
+      "hairColor": "#hex",
+      "hairStyle": "long|short|bun|bald",
+      "hasWeapon": "sword|staff" (optional)
+    },
+    "pose": "standing|sitting|fighting|meditating|walking|kneeling"
+  }],
+  "texts": [{
+    "character": "name or null for narration",
+    "text": "...",
+    "startTime": seconds,
+    "endTime": seconds,
+    "type": "dialogue|narration|thought"
+  }]
+}`;
 
-    let messages: OpenAI.ChatCompletionMessageParam[] = [
-      { role: 'system', content: systemPrompt },
-      { role: 'user', content: userMessage },
-    ];
     let retries = 0;
-
     while (retries < MAX_RETRIES) {
-      const response = await this.client.chat.completions.create({
-        model: config.model,
-        max_tokens: 8192,
-        messages,
-        tools: allTools,
-      });
+      try {
+        const result = await queryClaudeCliJson<Record<string, unknown>>(prompt, systemPrompt);
+        const validation = validateSceneSpec(result);
 
-      const choice = response.choices[0];
-      if (!choice) { retries++; continue; }
-
-      const msg = choice.message;
-      const toolCalls = msg.tool_calls;
-
-      if (!toolCalls || toolCalls.length === 0) {
-        retries++;
-        messages.push(msg);
-        messages.push({ role: 'user', content: 'You must call the DesignScene tool to generate the scene specification. Please try again.' });
-        continue;
-      }
-
-      // Add assistant message with tool calls
-      messages.push(msg);
-
-      let designResult: Record<string, unknown> | null = null;
-
-      for (const toolCall of toolCalls) {
-        const args = JSON.parse(toolCall.function.arguments);
-
-        if (toolCall.function.name === 'AnalyzeScene') {
-          messages.push({
-            role: 'tool',
-            tool_call_id: toolCall.id,
-            content: 'Analysis recorded. Now call DesignScene with the full scene specification.',
-          });
-        } else if (toolCall.function.name === 'DesignScene') {
-          const validation = validateSceneSpec(args);
-
-          if (validation.valid) {
-            designResult = args;
-            messages.push({
-              role: 'tool',
-              tool_call_id: toolCall.id,
-              content: 'Scene specification accepted.',
-            });
-          } else {
-            messages.push({
-              role: 'tool',
-              tool_call_id: toolCall.id,
-              content: `Validation failed:\n${validation.errors.join('\n')}\n\nPlease fix these issues and call DesignScene again.`,
-            });
-          }
+        if (validation.valid) {
+          return this.buildSceneSpec(result, actIndex);
         }
-      }
 
-      if (designResult) {
-        return this.buildSceneSpec(designResult, actIndex);
-      }
+        console.warn(`[NovelAgent] Scene ${actIndex + 1} validation failed (attempt ${retries + 1}):`, validation.errors);
 
-      if (choice.finish_reason === 'stop') {
+        // Retry with error feedback
+        const retryPrompt = `${prompt}\n\nYour previous attempt had these errors:\n${validation.errors.join('\n')}\n\nFix them and return the corrected JSON.`;
+        const retryResult = await queryClaudeCliJson<Record<string, unknown>>(retryPrompt, systemPrompt);
+        const retryValidation = validateSceneSpec(retryResult);
+
+        if (retryValidation.valid) {
+          return this.buildSceneSpec(retryResult, actIndex);
+        }
+
+        retries++;
+      } catch (err) {
+        console.warn(`[NovelAgent] Scene ${actIndex + 1} attempt ${retries + 1} failed:`, (err as Error).message);
         retries++;
       }
     }

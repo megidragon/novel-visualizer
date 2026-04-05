@@ -1,7 +1,6 @@
-import OpenAI from 'openai';
 import type { StyleTheme } from '@novel-visualizer/shared';
-import { config } from '../../config.js';
 import { getActSplitterPrompt } from './prompts.js';
+import { queryClaudeCliJson } from './claude-cli.js';
 
 export interface ActBoundary {
   charOffset: number;
@@ -16,59 +15,41 @@ export interface Act {
   description: string;
 }
 
-const CHUNK_SIZE = 80_000; // ~50 pages worth of characters
+const CHUNK_SIZE = 80_000;
 
 export async function splitIntoActs(fullText: string, style: StyleTheme): Promise<Act[]> {
-  const client = new OpenAI({
-    apiKey: config.openrouterApiKey,
-    baseURL: config.openrouterBaseUrl,
-  });
   const systemPrompt = getActSplitterPrompt(style);
 
-  // Split text into large chunks for analysis
   const chunks: string[] = [];
   for (let i = 0; i < fullText.length; i += CHUNK_SIZE) {
     chunks.push(fullText.slice(i, i + CHUNK_SIZE));
   }
 
-  // Collect all boundaries across chunks
   const allBoundaries: ActBoundary[] = [];
   let runningOffset = 0;
 
   for (const chunk of chunks) {
-    const response = await client.chat.completions.create({
-      model: config.model,
-      max_tokens: 4096,
-      messages: [
-        { role: 'system', content: systemPrompt },
-        { role: 'user', content: `Analyze this chunk of the novel and identify act boundaries:\n\n${chunk}` },
-      ],
-    });
-
-    const text = response.choices[0]?.message?.content || '';
-
     try {
-      const jsonMatch = text.match(/\[[\s\S]*\]/);
-      if (jsonMatch) {
-        const boundaries: ActBoundary[] = JSON.parse(jsonMatch[0]);
-        for (const b of boundaries) {
-          allBoundaries.push({
-            ...b,
-            charOffset: b.charOffset + runningOffset,
-          });
-        }
+      const boundaries = await queryClaudeCliJson<ActBoundary[]>(
+        `Analyze this chunk of the novel and identify act boundaries:\n\n${chunk}`,
+        systemPrompt,
+      );
+
+      for (const b of boundaries) {
+        allBoundaries.push({
+          ...b,
+          charOffset: b.charOffset + runningOffset,
+        });
       }
-    } catch {
-      console.warn('[ActSplitter] Failed to parse boundaries for chunk, skipping');
+    } catch (err) {
+      console.error(`[ActSplitter] Failed to parse boundaries for chunk ${chunks.indexOf(chunk) + 1}/${chunks.length}:`, (err as Error).message);
     }
 
     runningOffset += chunk.length;
   }
 
-  // Sort boundaries by offset
   allBoundaries.sort((a, b) => a.charOffset - b.charOffset);
 
-  // Build acts from boundaries
   const acts: Act[] = [];
 
   if (allBoundaries.length === 0) {
@@ -81,7 +62,6 @@ export async function splitIntoActs(fullText: string, style: StyleTheme): Promis
     return acts;
   }
 
-  // First act: start of text to first boundary
   acts.push({
     index: 0,
     text: fullText.slice(0, allBoundaries[0].charOffset),
@@ -89,7 +69,6 @@ export async function splitIntoActs(fullText: string, style: StyleTheme): Promis
     description: allBoundaries[0].description,
   });
 
-  // Middle acts
   for (let i = 0; i < allBoundaries.length - 1; i++) {
     acts.push({
       index: i + 1,
@@ -99,7 +78,6 @@ export async function splitIntoActs(fullText: string, style: StyleTheme): Promis
     });
   }
 
-  // Last act: last boundary to end of text
   const lastBoundary = allBoundaries[allBoundaries.length - 1];
   acts.push({
     index: allBoundaries.length,
