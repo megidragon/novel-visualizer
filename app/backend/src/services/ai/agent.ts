@@ -3,7 +3,7 @@ import { v4 as uuid } from 'uuid';
 import { splitIntoActs, type Act } from './act-splitter.js';
 import { getSceneDesignPrompt, getCharacterRegistryPrompt } from './prompts.js';
 import { validateSceneSpec } from './validator.js';
-import { queryClaudeCli, queryClaudeCliJson } from './claude-cli.js';
+import { queryAiJson } from './provider.js';
 
 interface CharacterRegistry {
   name: string;
@@ -25,16 +25,17 @@ export class NovelAgent {
 
   async splitIntoActs(): Promise<Act[]> {
     await this.buildCharacterRegistry();
-    return splitIntoActs(this.fullText, this.style);
+    return splitIntoActs(this.fullText, this.style, this.projectId);
   }
 
   private async buildCharacterRegistry(): Promise<void> {
     const sample = this.fullText.slice(0, 20_000);
 
     try {
-      this.characterRegistry = await queryClaudeCliJson<CharacterRegistry[]>(
+      this.characterRegistry = await queryAiJson<CharacterRegistry[]>(
         `Analyze these characters from the novel:\n\n${sample}`,
         getCharacterRegistryPrompt(),
+        { projectId: this.projectId, label: 'character-registry' },
       );
     } catch (err) {
       console.error('[NovelAgent] Failed to parse character registry:', (err as Error).message);
@@ -100,7 +101,10 @@ Respond with a single JSON object matching this exact structure (no markdown, no
     let retries = 0;
     while (retries < MAX_RETRIES) {
       try {
-        const result = await queryClaudeCliJson<Record<string, unknown>>(prompt, systemPrompt);
+        const result = await queryAiJson<Record<string, unknown>>(prompt, systemPrompt, {
+          projectId: this.projectId,
+          label: `scene-design-${actIndex + 1}`,
+        });
         const validation = validateSceneSpec(result);
 
         if (validation.valid) {
@@ -111,7 +115,10 @@ Respond with a single JSON object matching this exact structure (no markdown, no
 
         // Retry with error feedback
         const retryPrompt = `${prompt}\n\nYour previous attempt had these errors:\n${validation.errors.join('\n')}\n\nFix them and return the corrected JSON.`;
-        const retryResult = await queryClaudeCliJson<Record<string, unknown>>(retryPrompt, systemPrompt);
+        const retryResult = await queryAiJson<Record<string, unknown>>(retryPrompt, systemPrompt, {
+          projectId: this.projectId,
+          label: `scene-design-${actIndex + 1}-retry`,
+        });
         const retryValidation = validateSceneSpec(retryResult);
 
         if (retryValidation.valid) {

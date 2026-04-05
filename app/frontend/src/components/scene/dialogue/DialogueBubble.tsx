@@ -7,20 +7,38 @@ interface Props {
   position: [number, number, number];
 }
 
+const MAX_TEXT_LENGTH = 120;
+
+function truncate(text: string, max: number): string {
+  if (text.length <= max) return text;
+  return text.slice(0, max).trimEnd() + '...';
+}
+
 export default function DialogueBubble({ entry, position }: Props) {
   const isThought = entry.type === 'thought';
   const bubbleClass = isThought ? 'thought-bubble' : 'speech-bubble';
 
   return (
     <group position={position}>
-      <Html center distanceFactor={8} zIndexRange={[100, 0]}>
+      <Html
+        center
+        sprite
+        distanceFactor={undefined}
+        style={{
+          transform: 'scale(1.8)',
+          transformOrigin: 'center bottom',
+          pointerEvents: 'none',
+          whiteSpace: 'nowrap',
+        }}
+        zIndexRange={[100, 0]}
+      >
         <div className={`bubble ${bubbleClass}`}>
           {entry.character && (
             <span className="speaker-name" style={{ color: nameToColor(entry.character) }}>
               {entry.character}
             </span>
           )}
-          <p className="bubble-text">{entry.text}</p>
+          <p className="bubble-text">{truncate(entry.text, MAX_TEXT_LENGTH)}</p>
           <div className="bubble-tail" />
         </div>
       </Html>

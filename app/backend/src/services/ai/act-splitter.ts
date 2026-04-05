@@ -1,6 +1,6 @@
 import type { StyleTheme } from '@novel-visualizer/shared';
 import { getActSplitterPrompt } from './prompts.js';
-import { queryClaudeCliJson } from './claude-cli.js';
+import { queryAiJson } from './provider.js';
 
 export interface ActBoundary {
   charOffset: number;
@@ -64,7 +64,7 @@ function snapToBreak(fullText: string, offset: number): number {
   return offset;
 }
 
-export async function splitIntoActs(fullText: string, style: StyleTheme): Promise<Act[]> {
+export async function splitIntoActs(fullText: string, style: StyleTheme, projectId?: string): Promise<Act[]> {
   const systemPrompt = getActSplitterPrompt(style);
 
   const chunks: string[] = [];
@@ -80,9 +80,10 @@ export async function splitIntoActs(fullText: string, style: StyleTheme): Promis
     console.log(`[ActSplitter] Processing chunk ${ci + 1}/${chunks.length}...`);
 
     try {
-      const boundaries = await queryClaudeCliJson<ActBoundary[]>(
+      const boundaries = await queryAiJson<ActBoundary[]>(
         `Analyze this chunk of the novel and identify act boundaries.\nThe chunk starts at character offset ${runningOffset} of the full novel.\n\n${chunk}`,
         systemPrompt,
+        { projectId, label: `act-split-chunk-${ci + 1}` },
       );
 
       for (const b of boundaries) {

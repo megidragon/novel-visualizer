@@ -19,7 +19,6 @@ export class PiperTTS {
   }
 
   async synthesizeText(text: string, outputWavPath: string): Promise<number> {
-    // Write text to temp file (more reliable on Windows than piping)
     const textFile = outputWavPath + '.txt';
     await fs.writeFile(textFile, text, 'utf-8');
 
@@ -45,25 +44,48 @@ export class PiperTTS {
     const wavFiles: string[] = [];
     const updatedTexts: DialogueEntry[] = [];
     let currentTime = 0;
-    const SILENCE_GAP = 0.5; // seconds between entries
+    const SILENCE_GAP = 0.5;
 
-    for (let i = 0; i < texts.length; i++) {
-      const entry = texts[i];
-      const wavPath = path.join(tempDir, `tts_${uuid()}.wav`);
-      wavFiles.push(wavPath);
+    // Filter out empty/whitespace-only text entries
+    const validTexts = texts.filter(t => t.text && t.text.trim().length > 0);
 
-      const duration = await this.synthesizeText(entry.text, wavPath);
-
-      updatedTexts.push({
-        ...entry,
-        startTime: currentTime,
-        endTime: currentTime + duration,
-      });
-
-      currentTime += duration + SILENCE_GAP;
+    if (validTexts.length === 0) {
+      console.warn('[PiperTTS] No valid text entries for scene, creating silent audio');
+      // Create a minimal silent MP3
+      await this.createSilentMp3(outputMp3Path, 1.0);
+      return { durationSeconds: 1.0, texts: [] };
     }
 
-    // Concatenate all WAVs
+    for (let i = 0; i < validTexts.length; i++) {
+      const entry = validTexts[i];
+      const wavPath = path.join(tempDir, `tts_${uuid()}.wav`);
+
+      try {
+        const duration = await this.synthesizeText(entry.text, wavPath);
+        wavFiles.push(wavPath);
+
+        updatedTexts.push({
+          ...entry,
+          startTime: currentTime,
+          endTime: currentTime + duration,
+        });
+
+        currentTime += duration + SILENCE_GAP;
+        console.log(`[PiperTTS] Entry ${i + 1}/${validTexts.length}: ${duration.toFixed(1)}s`);
+      } catch (err) {
+        console.error(`[PiperTTS] Failed to synthesize entry ${i + 1}/${validTexts.length}: ${(err as Error).message}`);
+        console.error(`[PiperTTS] Text was: "${entry.text.slice(0, 100)}..."`);
+        // Skip this entry but continue with others
+        await fs.unlink(wavPath).catch(() => {});
+      }
+    }
+
+    if (wavFiles.length === 0) {
+      console.warn('[PiperTTS] All entries failed, creating silent audio');
+      await this.createSilentMp3(outputMp3Path, 1.0);
+      return { durationSeconds: 1.0, texts: [] };
+    }
+
     const combinedWav = path.join(tempDir, `combined_${uuid()}.wav`);
     if (wavFiles.length === 1) {
       await fs.copyFile(wavFiles[0], combinedWav);
@@ -71,17 +93,26 @@ export class PiperTTS {
       await concatenateWavFiles(wavFiles, combinedWav, SILENCE_GAP);
     }
 
-    // Convert to MP3
     await convertWavToMp3(combinedWav, outputMp3Path);
 
-    const totalDuration = currentTime - SILENCE_GAP; // remove trailing gap
-
-    // Cleanup temp files
+    const totalDuration = currentTime - SILENCE_GAP;
     await cleanupTempFiles([...wavFiles, combinedWav]);
 
     return {
       durationSeconds: Math.max(totalDuration, 0),
       texts: updatedTexts,
     };
+  }
+
+  private async createSilentMp3(outputPath: string, durationSeconds: number): Promise<void> {
+    await execFileAsync(config.ffmpegPath, [
+      '-f', 'lavfi',
+      '-i', `anullsrc=r=22050:cl=mono`,
+      '-t', String(durationSeconds),
+      '-codec:a', 'libmp3lame',
+      '-b:a', '128k',
+      '-y',
+      outputPath,
+    ]);
   }
 }

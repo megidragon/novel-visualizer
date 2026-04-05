@@ -13,21 +13,64 @@ interface ClaudeCliResponse {
   duration_ms: number;
 }
 
+export interface CliOptions {
+  /** Project ID - if set, prompt+response are saved to the project's prompts/ folder */
+  projectId?: string;
+  /** Label for the saved file (e.g. "act-split-chunk-3", "scene-design-5") */
+  label?: string;
+}
+
+let promptCounter = 0;
+
+async function savePromptLog(
+  projectId: string,
+  label: string,
+  prompt: string,
+  response: string,
+  durationMs: number,
+): Promise<void> {
+  const promptsDir = path.join(config.novelsDir, 'projects', projectId, 'prompts');
+  await fs.mkdir(promptsDir, { recursive: true });
+
+  promptCounter++;
+  const filename = `${String(promptCounter).padStart(3, '0')}_${label}.md`;
+
+  const content = `# Prompt: ${label}
+**Date:** ${new Date().toISOString()}
+**Duration:** ${durationMs}ms
+**Prompt length:** ${prompt.length} chars
+**Response length:** ${response.length} chars
+
+---
+
+## Prompt
+
+\`\`\`
+${prompt}
+\`\`\`
+
+---
+
+## Response
+
+\`\`\`
+${response}
+\`\`\`
+`;
+
+  await fs.writeFile(path.join(promptsDir, filename), content, 'utf-8');
+}
+
 /**
  * Calls Claude Code CLI in non-interactive mode.
- * Writes prompt to a temp file and pipes it via stdin to avoid
- * Windows command-line length limits.
  */
-export async function queryClaudeCli(prompt: string, systemPrompt?: string): Promise<string> {
+export async function queryClaudeCli(prompt: string, systemPrompt?: string, options?: CliOptions): Promise<string> {
   console.log(`[ClaudeCLI] Sending prompt (${prompt.length} chars)...`);
 
-  // Combine system prompt + user prompt into one text to avoid
-  // Windows command-line argument length limits
   const fullPrompt = systemPrompt
     ? `<system>\n${systemPrompt}\n</system>\n\n${prompt}`
     : prompt;
 
-  // Write to temp file and pipe via stdin
   const tempDir = path.join(config.novelsDir, 'temp');
   await fs.mkdir(tempDir, { recursive: true });
   const tempFile = path.join(tempDir, `prompt_${uuid()}.txt`);
@@ -37,7 +80,6 @@ export async function queryClaudeCli(prompt: string, systemPrompt?: string): Pro
 
   try {
     const stdout = await new Promise<string>((resolve, reject) => {
-      // Strip ANTHROPIC_API_KEY so claude CLI uses its own subscription auth
       const env = { ...process.env };
       delete env.ANTHROPIC_API_KEY;
 
@@ -62,7 +104,6 @@ export async function queryClaudeCli(prompt: string, systemPrompt?: string): Pro
         }
       });
 
-      // Pipe the prompt file content to stdin
       const stream = createReadStream(tempFile);
       stream.pipe(proc.stdin);
       stream.on('error', () => proc.stdin.end());
@@ -82,6 +123,15 @@ export async function queryClaudeCli(prompt: string, systemPrompt?: string): Pro
     }
 
     console.log(`[ClaudeCLI] OK (${response.result.length} chars, ${response.duration_ms}ms)`);
+
+    // Save prompt + response log
+    if (options?.projectId) {
+      const label = options.label || 'unknown';
+      await savePromptLog(options.projectId, label, fullPrompt, response.result, response.duration_ms).catch((err) => {
+        console.warn(`[ClaudeCLI] Failed to save prompt log: ${(err as Error).message}`);
+      });
+    }
+
     return response.result;
   } finally {
     fs.unlink(tempFile).catch(() => {});
@@ -91,10 +141,9 @@ export async function queryClaudeCli(prompt: string, systemPrompt?: string): Pro
 /**
  * Sends a prompt and parses the response as JSON.
  */
-export async function queryClaudeCliJson<T>(prompt: string, systemPrompt?: string): Promise<T> {
-  const result = await queryClaudeCli(prompt, systemPrompt);
+export async function queryClaudeCliJson<T>(prompt: string, systemPrompt?: string, options?: CliOptions): Promise<T> {
+  const result = await queryClaudeCli(prompt, systemPrompt, options);
 
-  // Extract JSON from response (may be wrapped in markdown code blocks)
   const jsonMatch =
     result.match(/```(?:json)?\s*([\s\S]*?)```/) ||
     result.match(/(\[[\s\S]*\])/) ||
