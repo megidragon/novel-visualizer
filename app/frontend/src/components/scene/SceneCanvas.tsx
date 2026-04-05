@@ -1,6 +1,8 @@
-import { Canvas } from '@react-three/fiber';
+import { useEffect, useRef } from 'react';
+import { Canvas, useThree } from '@react-three/fiber';
 import { OrthographicCamera } from '@react-three/drei';
 import type { SceneSpec } from '@novel-visualizer/shared';
+import type { OrthographicCamera as OrthoCam } from 'three';
 import SceneLighting from './SceneLighting.js';
 import EnvironmentFactory from './environments/EnvironmentFactory.js';
 import ProceduralCharacter from './characters/ProceduralCharacter.js';
@@ -13,16 +15,26 @@ interface Props {
   currentTime: number;
 }
 
+function CameraSetup() {
+  const { camera } = useThree();
+  useEffect(() => {
+    camera.lookAt(0, 1, 0);
+    camera.updateProjectionMatrix();
+  }, [camera]);
+  return null;
+}
+
 export default function SceneCanvas({ scene, currentTime }: Props) {
   return (
     <Canvas style={{ position: 'absolute', inset: 0 }}>
       <OrthographicCamera
         makeDefault
-        position={[10, 10, 10]}
-        zoom={50}
+        position={[10, 8, 10]}
+        zoom={65}
         near={0.1}
-        far={100}
+        far={200}
       />
+      <CameraSetup />
       <SceneLighting spec={scene.environment.lighting} style={scene.style} />
       <EnvironmentFactory spec={scene.environment} style={scene.style} />
       {scene.environment.props.map((prop, i) => (

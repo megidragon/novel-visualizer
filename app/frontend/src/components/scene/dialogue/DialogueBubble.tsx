@@ -25,7 +25,7 @@ export default function DialogueBubble({ entry, position }: Props) {
         sprite
         distanceFactor={undefined}
         style={{
-          transform: 'scale(1.8)',
+          transform: 'scale(1.44)',
           transformOrigin: 'center bottom',
           pointerEvents: 'none',
           whiteSpace: 'nowrap',
