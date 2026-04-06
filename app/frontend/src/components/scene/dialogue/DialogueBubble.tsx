@@ -16,7 +16,6 @@ function truncate(text: string, max: number): string {
 
 export default function DialogueBubble({ entry, position }: Props) {
   const isThought = entry.type === 'thought';
-  const bubbleClass = isThought ? 'thought-bubble' : 'speech-bubble';
 
   return (
     <group position={position}>
@@ -28,18 +27,19 @@ export default function DialogueBubble({ entry, position }: Props) {
           transform: 'scale(1.44)',
           transformOrigin: 'center bottom',
           pointerEvents: 'none',
-          whiteSpace: 'nowrap',
         }}
         zIndexRange={[100, 0]}
       >
-        <div className={`bubble ${bubbleClass}`}>
-          {entry.character && (
-            <span className="speaker-name" style={{ color: nameToColor(entry.character) }}>
-              {entry.character}
-            </span>
-          )}
-          <p className="bubble-text">{truncate(entry.text, MAX_TEXT_LENGTH)}</p>
-          <div className="bubble-tail" />
+        <div className="bubble-wrapper">
+          <div className={`bubble-box ${isThought ? 'thought' : 'speech'}`}>
+            {entry.character && (
+              <span className="speaker-name" style={{ color: nameToColor(entry.character) }}>
+                {entry.character}
+              </span>
+            )}
+            <p className="bubble-text">{truncate(entry.text, MAX_TEXT_LENGTH)}</p>
+          </div>
+          <div className={`bubble-tail ${isThought ? 'tail-thought' : 'tail-speech'}`} />
         </div>
       </Html>
     </group>

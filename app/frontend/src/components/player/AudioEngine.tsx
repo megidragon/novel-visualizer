@@ -11,7 +11,11 @@ export default function AudioEngine() {
     scenes,
     currentSceneIndex,
     isPlaying,
+    volume,
+    playbackRate,
+    seekRequest,
     setCurrentTime,
+    clearSeekRequest,
     onAudioEnded,
   } = usePlayerStore();
 
@@ -50,7 +54,25 @@ export default function AudioEngine() {
     }
   }, [isPlaying]);
 
-  // Time update loop using rAF for smooth sync
+  // Volume sync
+  useEffect(() => {
+    if (audioRef.current) audioRef.current.volume = volume;
+  }, [volume]);
+
+  // Playback rate sync
+  useEffect(() => {
+    if (audioRef.current) audioRef.current.playbackRate = playbackRate;
+  }, [playbackRate]);
+
+  // Seek handling
+  useEffect(() => {
+    if (seekRequest !== null && audioRef.current) {
+      audioRef.current.currentTime = seekRequest;
+      clearSeekRequest();
+    }
+  }, [seekRequest, clearSeekRequest]);
+
+  // Time update loop
   const updateTime = useCallback(() => {
     if (audioRef.current && isPlaying) {
       setCurrentTime(audioRef.current.currentTime);
@@ -89,5 +111,5 @@ export default function AudioEngine() {
     preload.preload = 'auto';
   }, [projectId, currentSceneIndex, scenes]);
 
-  return null; // Headless component
+  return null;
 }

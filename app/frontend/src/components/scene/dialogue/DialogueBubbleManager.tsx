@@ -38,7 +38,7 @@ export default function DialogueBubbleManager({ texts, characters, currentTime }
             entry={entry}
             position={[
               char.position.x,
-              char.position.y + headHeight + 0.4,
+              char.position.y + headHeight + 1.2,
               char.position.z,
             ]}
           />
