@@ -20,8 +20,7 @@ export default function DialogueBubbleManager({ texts, characters, currentTime }
   // Filter active dialogue/thought entries (not narration)
   const activeBubbles = texts.filter((t) => {
     if (t.type === 'narration') return false;
-    const displayTime = Math.max(0, t.startTime - 2); // 2s before audio
-    return currentTime >= displayTime && currentTime <= t.endTime;
+    return currentTime >= t.startTime && currentTime <= t.endTime;
   });
 
   return (
