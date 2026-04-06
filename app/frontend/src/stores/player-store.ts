@@ -82,7 +82,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
     const { currentSceneIndex, scenes } = get();
     if (currentSceneIndex < scenes.length - 1) {
       setTimeout(() => {
-        set({ currentSceneIndex: currentSceneIndex + 1, currentTime: 0, seekRequest: 0 });
+        set({ currentSceneIndex: currentSceneIndex + 1, currentTime: 0, seekRequest: 0, isPlaying: true });
       }, 1500);
     } else {
       set({ isPlaying: false });

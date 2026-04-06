@@ -40,7 +40,15 @@ export default function AudioEngine() {
     audio.src = getSceneAudioUrl(projectId, scene.sequence);
     audio.currentTime = 0;
     audio.load();
-  }, [projectId, currentSceneIndex, scenes]);
+
+    // Auto-play if isPlaying is true when scene changes
+    if (isPlaying) {
+      audio.addEventListener('canplay', function onCanPlay() {
+        audio.removeEventListener('canplay', onCanPlay);
+        audio.play().catch(() => {});
+      });
+    }
+  }, [projectId, currentSceneIndex, scenes, isPlaying]);
 
   // Play/pause sync
   useEffect(() => {
